@@ -35,13 +35,13 @@
       <option value="case-001">Case 1: 陳建國 (一般風險 - 目標 130)</option>
       <option value="case-002">Case 2: 林淑芬 (高風險/糖尿病 - 目標 100)</option>
       <option value="case-003">Case 3: 李大衛 (非常高風險/MI - 目標 70)</option>
-      <option value="case-004">Case 4: 張阿中 (極高風險/洗腎 - 目標 70)</option>
+      <option value="case-004">Case 4: 張阿中 (極高風險/洗腎 - 目標 55)</option>
       <option value="case-005">Case 5: 查無此人 (數據缺失測試)</option>
     </select>
   </div>
 
   <div id="decisionResult">
-    </div>
+  </div>
 
   <div id="debugInfo" class="debug-panel">
     <div>
@@ -55,54 +55,64 @@
   </div>
 
   <script>
-    // 1. 風險設定常數
-    const PATIENT_RISK = {
-      "case-001": { level: "low", name: "陳建國 (一般風險)", target: 130, desc: "無重大心血管疾病、無糖尿病、無慢性腎病" },
-      "case-002": { level: "high", name: "林淑芬 (高風險)", target: 100, desc: "糖尿病病史 (DM)" },
-      "case-003": { level: "veryhigh", name: "李大衛 (非常高風險)", target: 70, desc: "曾患急性心肌梗塞 (History of MI)" },
-      "case-004": { level: "veryhigh", name: "張阿中 (極高風險)", target: 70, desc: "慢性腎病第五期 (CKD Stage 5/洗腎)" },
-      "case-005": { level: "unknown", name: "查無此人 (數據測試)", target: null, desc: "新進病人，尚無血脂紀錄" }
+    // 1. 風險設定常數（2025 共識版）
+    const PATIENT_RISK_LEVELS = {
+      low:       { target: 130, desc: "低風險" },
+      moderate:  { target: 115, desc: "中風險" },
+      high:      { target: 100, desc: "高風險（如糖尿病、CKD、LDL≥190）" },
+      veryhigh:  { target: 70,  desc: "非常高風險（如既往 MI、腦中風、PAD）" },
+      extreme:   { target: 55,  desc: "極高風險（如多次事件、嚴重多處狹窄、洗腎+ASCVD）" },
+      unknown:   { target: null, desc: "風險不明或資料不足" }
+    };
+
+    // 目前下拉選單對應（未來應從 Condition 動態判斷風險）
+    const MOCK_CASE_RISK = {
+      "case-001": { level: "low",       name: "陳建國 (一般風險)",       target: 130, desc: "無重大心血管疾病、無糖尿病、無慢性腎病" },
+      "case-002": { level: "high",      name: "林淑芬 (高風險)",         target: 100, desc: "糖尿病病史 (DM)" },
+      "case-003": { level: "veryhigh",  name: "李大衛 (非常高風險)",     target: 70,  desc: "曾患急性心肌梗塞 (History of MI)" },
+      "case-004": { level: "extreme",   name: "張阿中 (極高風險)",       target: 55,  desc: "慢性腎病第五期 (CKD Stage 5/洗腎)" },
+      "case-005": { level: "unknown",   name: "查無此人 (數據測試)",     target: null, desc: "新進病人，尚無血脂紀錄" }
     };
 
     const LOINC_LDL = "13457-7";
-    const FHIR_BASE_URL = "https://thas.mohw.gov.tw/v/r4/fhir";
 
     // 2. 核心決策邏輯 (2025 專家共識版)
     function evaluateStatinRecommendation(ldl, patientId) {
-      const risk = PATIENT_RISK[patientId];
-      if (!risk) return "<div class='decision status-unknown'>查無此個案風險設定</div>";
-
-      // 處理 Case 5 或數據缺失情況
-      if (ldl === null || ldl === undefined) {
+      const risk = MOCK_CASE_RISK[patientId] || { level: "unknown", target: null, desc: "未知", name: "未知" };
+      if (risk.target === null || ldl === null || ldl === undefined) {
         return `
           <div class="decision status-unknown">
             <div style="font-size: 24px; font-weight: bold;">❓ 臨床資訊不足</div>
-            <div style="font-size: 18px;">找不到 LDL-C 檢驗紀錄 (LOINC: ${LOINC_LDL})</div>
+            <div style="font-size: 18px;">找不到 LDL-C 檢驗紀錄 (LOINC: ${LOINC_LDL}) 或風險分類</div>
             <hr style="border: 0.5px solid rgba(255,255,255,0.3); margin: 15px 0;">
             <div style="text-align: left;">
               <strong>個案背景：</strong> ${risk.desc}<br><br>
-              <strong>建議：</strong> 目前無法判定是否達標。建議醫師立即安排血脂抽血檢驗，以進行風險分層管理。
+              <strong>建議：</strong> 目前無法判定是否達標。建議醫師立即安排血脂抽血檢驗，並補齊 Condition 資源（糖尿病、ASCVD 等），以進行風險分層管理。
             </div>
           </div>`;
       }
 
       const target = risk.target;
-      const isAchieved = ldl < target;
-      const isSeverelyHigh = ldl >= target * 1.2; // 嚴重超標 20%
+      const diff = ldl - target;
 
-      let statusClass = "status-good";
-      let title = "✅ 良好控制";
-      let drugAdvice = "目前治療效果理想，請維持良好生活習慣與現有藥物。";
+      let statusClass, title, advice;
 
-      if (!isAchieved) {
-        statusClass = isSeverelyHigh ? "status-danger" : "status-warning";
-        title = isSeverelyHigh ? "🚨 立即加強治療" : "⚠️ 尚未達標";
-        
-        if (isSeverelyHigh) {
-          drugAdvice = `<strong>專家建議：</strong> 數值顯著高於目標值。依據 2025 共識，建議在最大耐受劑量 Statin 之外，考慮合併使用 <strong>Ezetimibe</strong> 或 <strong>PCSK9 抑制劑</strong>。`;
-        } else {
-          drugAdvice = `<strong>專家建議：</strong> 尚未達標。建議評估藥物順從性，並考慮調升 Statin 劑量或更換為強效型 Statin。`;
-        }
+      if (diff < 0) {
+        statusClass = "status-good";
+        title = "✅ 已達標";
+        advice = "LDL-C 控制良好，請繼續維持目前治療與生活型態。";
+      } else if (diff < 10) {
+        statusClass = "status-warning";
+        title = "⚠️ 輕度未達標";
+        advice = "尚未達標，建議強化生活型態、確認服藥順從性，考慮增加 Statin 劑量。";
+      } else if (diff < 30) {
+        statusClass = "status-warning";
+        title = "⚠️ 中度未達標";
+        advice = "建議升級至高強度 Statin 或合併 Ezetimibe。";
+      } else {
+        statusClass = "status-danger";
+        title = "🚨 嚴重未達標";
+        advice = "強烈建議最大耐受 Statin + Ezetimibe，必要時考慮 PCSK9i（如 Evolocumab、Alirocumab）或 Inclisiran。";
       }
 
       return `
@@ -112,7 +122,7 @@
           <hr style="border: 0.5px solid rgba(255,255,255,0.3); margin: 15px 0;">
           <div style="text-align: left;">
             <strong>個案背景：</strong> ${risk.desc}<br><br>
-            ${drugAdvice}
+            <strong>專家建議：</strong> ${advice}
           </div>
         </div>`;
     }
@@ -124,45 +134,34 @@
       return obs.valueQuantity ? obs.valueQuantity.value : null;
     }
 
-    // 4. API 載入邏輯 (Debug 模式)
-    async function loadPatientData(patientId) {
-      const patientEl = document.getElementById("patient");
-      const obsEl = document.getElementById("obs");
-      const decisionEl = document.getElementById("decisionResult");
+    // 4. SMART on FHIR 載入邏輯
+    FHIR.oauth2.ready().then(client => {
+      // 讀取 Patient
+      client.request("Patient").then(patient => {
+        document.getElementById("patient").textContent = JSON.stringify(patient, null, 2);
 
-      try {
-        // A. 抓取 Patient
-        const pResp = await fetch(`${FHIR_BASE_URL}/Patient/${patientId}`);
-        const pJson = await pResp.json();
-        patientEl.textContent = JSON.stringify(pJson, null, 2);
+        // 讀取最新 LDL Observation
+        client.request(`Observation?code=${LOINC_LDL}&_sort=-date&_count=1`).then(bundle => {
+          document.getElementById("obs").textContent = JSON.stringify(bundle, null, 2);
+          const ldl = extractLdlValue(bundle);
 
-        // B. 抓取 LDL Observation
-        const oResp = await fetch(`${FHIR_BASE_URL}/Observation?patient=${patientId}&code=${LOINC_LDL}&_sort=-date&_count=1`);
-        const oJson = await oResp.json();
-        obsEl.textContent = JSON.stringify(oJson, null, 2);
+          // 暫用下拉選單選擇風險（未來可從 Condition 判斷）
+          const select = document.getElementById("patientSelect");
+          const selectedId = select.value;
+          document.getElementById("decisionResult").innerHTML = evaluateStatinRecommendation(ldl, selectedId);
 
-        // C. 執行 CDS 判斷
-        const ldl = extractLdlValue(oJson);
-        decisionEl.innerHTML = evaluateStatinRecommendation(ldl, patientId);
-
-      } catch (e) {
-        patientEl.textContent = `載入錯誤: ${e}`;
-        obsEl.textContent = `載入錯誤: ${e}`;
-        decisionEl.innerHTML = `<div class="decision status-danger">❌ 無法連線至 FHIR 伺服器</div>`;
-      }
-    }
-
-    // 5. 初始化與事件監聽
-    document.addEventListener("DOMContentLoaded", () => {
-      const select = document.getElementById("patientSelect");
-      
-      // 首次載入
-      loadPatientData(select.value);
-
-      // 切換病人
-      select.addEventListener("change", (e) => {
-        loadPatientData(e.target.value);
+          // 監聽下拉選單變化（但 LDL 是從 FHIR 讀取的，風險是 mock）
+          select.addEventListener("change", (e) => {
+            document.getElementById("decisionResult").innerHTML = evaluateStatinRecommendation(ldl, e.target.value);
+          });
+        }).catch(e => {
+          document.getElementById("obs").textContent = `載入錯誤: ${e}`;
+        });
+      }).catch(e => {
+        document.getElementById("patient").textContent = `載入錯誤: ${e}`;
       });
+    }).catch(err => {
+      document.getElementById("decisionResult").innerHTML = `<div class="decision status-danger">❌ SMART 授權失敗: ${err}</div>`;
     });
   </script>
 </body>
