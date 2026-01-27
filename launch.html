@@ -1,154 +1,20 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>啟動 | 台灣血脂 CDS 2025 臨床路徑</title>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/fhirclient@2.5.2/build/fhir-client.min.js"></script>
-  <style>
-    :root {
-      --primary: #0066cc;
-      --accent: #00aaff;
-      --bg-dark: #0a192f;
-      --text-light: #e6f1ff;
-    }
-
-    body {
-      font-family: 'Noto Sans TC', sans-serif;
-      background: var(--bg-dark);
-      color: var(--text-light);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      margin: 0;
-      background-image: radial-gradient(circle at 50% 50%, rgba(0,102,204,0.1) 0%, transparent 80%);
-    }
-
-    .launch-container {
-      text-align: center;
-      background: rgba(20, 40, 80, 0.5);
-      padding: 50px 40px;
-      border-radius: 24px;
-      border: 1px solid rgba(100, 181, 246, 0.3);
-      backdrop-filter: blur(10px);
-      box-shadow: 0 20px 50px rgba(0,0,0,0.3);
-      max-width: 500px;
-      width: 90%;
-    }
-
-    .logo-area {
-      margin-bottom: 30px;
-    }
-
-    .mohw-logo {
-      height: 60px;
-      filter: drop-shadow(0 0 10px rgba(255,255,255,0.2));
-    }
-
-    h1 {
-      font-size: 1.8rem;
-      margin: 20px 0 10px;
-      background: linear-gradient(90deg, #00aaff, #4fc3f7);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    p {
-      color: #a3bffa;
-      margin-bottom: 40px;
-      line-height: 1.6;
-    }
-
-    .launch-btn {
-      display: inline-block;
-      padding: 16px 45px;
-      font-size: 1.2rem;
-      font-weight: 600;
-      color: white;
-      background: linear-gradient(135deg, var(--primary), var(--accent));
-      border: none;
-      border-radius: 50px;
-      text-decoration: none;
-      box-shadow: 0 10px 25px rgba(0, 102, 204, 0.4);
-      transition: all 0.3s ease;
-      cursor: pointer;
-    }
-
-    .launch-btn:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 15px 35px rgba(0, 102, 204, 0.5);
-      filter: brightness(1.1);
-    }
-
-    footer {
-      margin-top: 30px;
-      font-size: 0.85rem;
-      color: #8892b0;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>SMART Launch - Lipid CDS</title>
+    <script src="https://cdn.jsdelivr.net/npm/fhirclient/build/fhir-client.js"></script>
 </head>
 <body>
-
-  <div class="launch-container">
-    <div class="logo-area">
-      <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Emblem_of_the_Ministry_of_Health_and_Welfare_of_the_Republic_of_China.svg/800px-Emblem_of_the_Ministry_of_Health_and_Welfare_of_the_Republic_of_China.svg.png" 
-           alt="衛生福利部" class="mohw-logo">
-    </div>
-
-    <h1>台灣血脂 CDS 2025</h1>
-    <p>臨床路徑決策支援工具<br>SMART on FHIR 安全啟動介面</p>
-
-    <a href="#" class="launch-btn" id="launchButton">
-      從 EHR 系統登入 →
-    </a>
-
-    <footer>
-      符合 THAS (Taiwan Health Architecture Service) 標準<br>
-      僅供醫療人員臨床決策參考
-    </footer>
-  </div>
-
-  <script>
-    /**
-     * SMART on FHIR 啟動邏輯
-     */
-    document.getElementById('launchButton').addEventListener('click', function(e) {
-      e.preventDefault();
-
-      // 1. 動態計算 Redirect URI (自動判斷是 localhost 還是正式 Domain)
-      // 假設 index.html 與 launch.html 放在同一個目錄下
-      const currentUrl = window.location.href;
-      const redirectUri = currentUrl.substring(0, currentUrl.lastIndexOf('/')) + '/index.html';
-
-      // 2. 執行 OAuth2 授權
-      FHIR.oauth2.authorize({
-        // FHIR Server 地址 (正式環境中，若由 EHR 啟動，此處通常會由啟動參數自動處理，但開發測試需手動指定)
-        iss: 'https://thas.mohw.gov.tw/v/r4/fhir',
-        
-        // 此 ID 需與您在 THAS 伺服器註冊的 Client ID 一致
-        client_id: 'taiwan-lipid-cds-2025',
-        
-        // 請求權限範圍：包含病人基本資料、診斷 (Condition)、檢驗 (Observation)
-        // 增加 openid fhirUser 以符合安全規範
-        scope: 'launch/patient patient/Patient.read patient/Observation.read patient/Condition.read openid fhirUser',
-        
-        // 授權完成後跳轉的頁面
-        redirect_uri: redirectUri
-      });
-    });
-
-    /**
-     * 自動偵測：若 URL 中已包含 launch 參數 (表示已經由 EHR 正式發起請求)
-     * 可選擇在此處直接自動點擊按鈕或進行導向
-     */
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('iss') && urlParams.has('launch')) {
-        console.log("偵測到 EHR 啟動請求，準備導向授權頁面...");
-        // 若要全自動啟動，可解除下方註釋
-        // document.getElementById('launchButton').click();
-    }
-  </script>
+    <p>正在連線至 THAS FHIR Server 並進行身分驗證，請稍候...</p>
+    <script>
+        FHIR.oauth2.authorize({
+            // client_id 需與您在 THAS 註冊的 ID 一致，若為測試環境通常可填 "my_web_app"
+            "client_id": "my_web_app", 
+            "scope": "patient/*.read launch openid fhirUser",
+            // 授權成功後，跳轉回 index.html
+            "redirect_uri": "index.html" 
+        });
+    </script>
 </body>
 </html>
