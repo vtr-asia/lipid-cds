@@ -212,7 +212,9 @@
         <option value="low">一般風險（目標 LDL &lt; 130 mg/dL）</option>
         <option value="high">高風險：糖尿病（目標 LDL &lt; 100 mg/dL）</option>
         <option value="veryhigh_mi">非常高風險：急性心肌梗塞病史（目標 LDL &lt; 70 mg/dL）</option>
-        <option value="veryhigh_ckd">極高風險：CKD Stage 5 / 洗腎（目標 LDL &lt; 70 mg/dL）</option>
+        <option value="veryhigh_stroke">非常高風險：缺血性腦中風 / PAD（目標 LDL &lt; 70 mg/dL）</option>
+        <option value="veryhigh_ckd">非常高風險：CKD Stage 5 / 洗腎（目標 LDL &lt; 70 mg/dL）</option>
+        <option value="extreme">極高風險：ASCVD 復發（目標 LDL &lt; 55 mg/dL）</option>
       </select>
       <div class="risk-note">※ 此選擇器用於指定 CDS 風險分層，不影響 FHIR 病人查詢</div>
     </div>
@@ -271,15 +273,19 @@
   // 風險設定（與 FHIR ID 完全分離）
   // ═══════════════════════════════════════════════════════════
   const RISK_CONFIG = {
-    "low":          { icon:"🟢", label:"一般風險",   target:130, desc:"無重大心血管疾病、無糖尿病、無慢性腎病" },
-    "high":         { icon:"🟡", label:"高風險",     target:100, desc:"糖尿病病史（DM）" },
-    "veryhigh_mi":  { icon:"🔴", label:"非常高風險", target:70,  desc:"曾患急性心肌梗塞（History of MI）" },
-    "veryhigh_ckd": { icon:"🔴", label:"極高風險",   target:70,  desc:"慢性腎病第五期（CKD Stage 5 / 洗腎）" }
+    "low":           { icon:"🟢", label:"一般風險",   target:130, desc:"無重大心血管疾病、無糖尿病、無慢性腎病" },
+    "high":          { icon:"🟡", label:"高風險",     target:100, desc:"糖尿病病史（DM）" },
+    "veryhigh_mi":   { icon:"🔴", label:"非常高風險", target:70,  desc:"曾患急性心肌梗塞（History of MI）" },
+    "veryhigh_ckd":  { icon:"🔴", label:"非常高風險", target:70,  desc:"慢性腎病第五期（CKD Stage 5 / 洗腎）" },
+    "veryhigh_stroke":{ icon:"🔴", label:"非常高風險", target:70,  desc:"缺血性腦中風或周邊動脈疾病（PAD）" },
+    "extreme":       { icon:"⚫", label:"極高風險",   target:55,  desc:"ASCVD 復發（已接受最大耐受劑量 Statin 仍再發）" }
   };
 
-  const LOINC_LDL = "13457-7";
-  let _fhirPatientId = null;   // 真實 FHIR Patient ID（來自 EHR context）
+  // LOINC codes：13457-7 = LDL-C（計算值），18262-6 = LDL-C（直接測定）
+  const LOINC_LDL = "13457-7,18262-6";
+  let _fhirPatientId = null;
   let _smartClient   = null;
+  let _ldlObsDate    = null;  // 記錄最新 LDL-C 檢驗日期
 
   // ═══════════════════════════════════════════════════════════
   // 解析 FHIR Patient 資源，顯示病人資訊卡
@@ -358,17 +364,29 @@
     const target = risk.target;
     const gap = ldl - target;
     const isAchieved = ldl < target;
-    const isSeverelyHigh = ldl >= target * 1.2;
+    // 嚴重超標：超出目標值 ≥ 30 mg/dL（非原本的 20% 比例，更符合臨床判斷）
+    const isSeverelyHigh = gap >= 30;
 
     let statusClass = "status-good", title = "✅ 良好控制";
-    let drugAdvice = "目前治療效果理想。建議維持良好飲食習慣與現有藥物，並定期追蹤血脂數值。";
+    let drugAdvice = "目前治療效果理想。建議維持良好飲食習慣與現有藥物，並每 6–12 個月定期追蹤血脂數值。";
 
     if (!isAchieved) {
       statusClass = isSeverelyHigh ? "status-danger" : "status-warning";
       title = isSeverelyHigh ? "🚨 立即加強治療" : "⚠️ 尚未達標";
-      drugAdvice = isSeverelyHigh
-        ? `<strong>專家建議（2025 共識）：</strong> LDL-C 顯著超出目標值 ${gap.toFixed(0)} mg/dL。建議在最大耐受劑量 Statin 之外，考慮合併使用 <strong>Ezetimibe</strong> 或 <strong>PCSK9 抑制劑</strong>。`
-        : `<strong>專家建議（2025 共識）：</strong> LDL-C 超出目標值 ${gap.toFixed(0)} mg/dL。建議評估藥物順從性，考慮調升 Statin 劑量或更換為強效型 Statin（Rosuvastatin / Atorvastatin）。`;
+
+      if (risk.target <= 55) {
+        // 極高風險：ASCVD 復發
+        drugAdvice = `<strong>專家建議（2025 共識）：</strong> LDL-C 超出極高風險目標值 ${gap.toFixed(0)} mg/dL。`
+          + `建議在最大耐受劑量 Statin＋Ezetimibe 基礎上，加用 <strong>PCSK9 抑制劑</strong>（Evolocumab / Alirocumab）。`;
+      } else if (isSeverelyHigh) {
+        drugAdvice = `<strong>專家建議（2025 共識）：</strong> LDL-C 顯著超出目標值 ${gap.toFixed(0)} mg/dL。`
+          + `建議在最大耐受劑量 Statin 之外，合併使用 <strong>Ezetimibe</strong>；`
+          + `若仍未達標，考慮加用 <strong>PCSK9 抑制劑</strong>。`;
+      } else {
+        drugAdvice = `<strong>專家建議（2025 共識）：</strong> LDL-C 超出目標值 ${gap.toFixed(0)} mg/dL。`
+          + `建議評估藥物順從性，考慮調升 Statin 劑量或更換為強效型 Statin（Rosuvastatin / Atorvastatin），`
+          + `必要時合併 <strong>Ezetimibe</strong>。`;
+      }
     }
 
     return {
@@ -377,6 +395,7 @@
         <div class="decision-value">
           目前 LDL-C：${ldl} mg/dL &nbsp;｜&nbsp; 治療目標：&lt; ${target} mg/dL
           &nbsp;｜&nbsp; 差距：${gap > 0 ? '+' : ''}${gap.toFixed(0)} mg/dL
+          ${_ldlObsDate ? `&nbsp;｜&nbsp; 檢驗日期：${_ldlObsDate}` : ''}
         </div>
         <hr class="decision-divider">
         <div class="decision-body">
@@ -415,8 +434,19 @@
   // ═══════════════════════════════════════════════════════════
   // 核心：用真實 FHIR Patient ID 查詢資料
   // ═══════════════════════════════════════════════════════════
+  let _cachedLdl = undefined;  // undefined = 尚未查詢; null = 查過但無資料
+
   async function loadFhirData(client, fhirPatientId, riskKey) {
     const decisionEl = document.getElementById("decisionResult");
+
+    // 若 LDL 已快取（切換風險分層時），不重新查 FHIR，直接重算 CDS
+    if (_cachedLdl !== undefined) {
+      const result = evaluateStatinRecommendation(_cachedLdl, riskKey);
+      decisionEl.innerHTML = result.html;
+      updateMetrics(result.ldl, result.target, riskKey);
+      return;
+    }
+
     decisionEl.innerHTML = `<div class="loading-state"><div class="spinner"></div><div class="loading-text">讀取 Patient/${fhirPatientId} 的臨床資料...</div></div>`;
     document.getElementById("metricsRow").style.display = "none";
 
@@ -430,20 +460,27 @@
     }
     renderPatientCard(pJson);
 
-    // ── LDL Observation ───────────────────────────────────
+    // ── LDL Observation（同時查兩個 LOINC code）──────────
     let ldl = null;
     try {
+      // 同時查計算值（13457-7）與直接測定值（18262-6），取最新一筆
       const oJson = await client.request(
-        `Observation?patient=${fhirPatientId}&code=${LOINC_LDL}&_sort=-date&_count=1`
+        `Observation?patient=${fhirPatientId}&code=13457-7,18262-6&_sort=-date&_count=1`
       );
       document.getElementById("debugObs").textContent = JSON.stringify(oJson, null, 2);
       if (oJson && oJson.entry && oJson.entry.length > 0) {
         const obs = oJson.entry[0].resource;
         ldl = obs.valueQuantity ? obs.valueQuantity.value : null;
+        // 記錄檢驗日期
+        _ldlObsDate = obs.effectiveDateTime
+          ? obs.effectiveDateTime.slice(0, 10)
+          : (obs.effectivePeriod?.start?.slice(0, 10) || null);
       }
     } catch(e) {
       document.getElementById("debugObs").textContent = `Observation 查詢失敗:\n${e}`;
     }
+
+    _cachedLdl = ldl;  // 快取，切換風險分層時不重查
 
     // ── CDS 決策 ──────────────────────────────────────────
     const result = evaluateStatinRecommendation(ldl, riskKey);
@@ -491,9 +528,11 @@
         // 初次載入
         loadFhirData(client, _fhirPatientId, riskSelect.value);
 
-        // 切換風險分層時重新計算（不重新查 FHIR，只重新跑 CDS 邏輯）
+        // 切換風險分層時重新計算（使用快取的 LDL，不重新查 FHIR）
         riskSelect.addEventListener("change", () => {
-          loadFhirData(client, _fhirPatientId, riskSelect.value);
+          const result = evaluateStatinRecommendation(_cachedLdl, riskSelect.value);
+          document.getElementById("decisionResult").innerHTML = result.html;
+          updateMetrics(result.ldl, result.target, riskSelect.value);
         });
       })
       .catch(err => {
